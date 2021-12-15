@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: spigot-plugin-deb-packer
+Parameters:
+  GithubProjectUrl:
+    Description: Github project URL for this project containing the buildspec file
+    Type: String
+    Default: https://github.com/sutdmc/spigot-plugin-deb-packer
+Resources:
+  InputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: Expiry
+            Status: Enabled
+            ExpirationInDays: 1
+  OutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: SpigotPluginDebPacker
+      ServiceRole: my-example-service-role
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:5.0
+      Source:
+        Type: GITHUB
+        Location: !Ref GithubProjectUrl
+        GitCloneDepth: 1
+      Triggers:
+        Webhook: false
+  CodeBuildProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: Read-Write Source bucket and Destination APT bucket
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: "s3:ListBucket"
+                Resource:
+                  - !Sub "arn:aws:s3::${InputBucket}"
+                  - !Sub "arn:aws:s3::${OutputBucket}"
+              - Effect: Allow
+                Action: "s3:*Object"
+                Resource:
+                  - !Sub "arn:aws:s3::${InputBucket}"
+                  - !Sub "arn:aws:s3::${OutputBucket}"
+  RunCodeBuildOnNewObjectRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Runs the deb packer codebuild project when a new object is uploaded in the jarfile
+      RoleArn: !Sub EventBridgeRole
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - "Object Created"
+        detail:
+          bucket:
+            name: !Ref InputBucket
+      Targets:
+        - Id: StartCodeBuild
+          Arn: !Ref CodeBuildProject
+          InputTransformer:
+            InputPathsMap:
+              JAR_S3_BUCKET: .detail.bucket.name
+              JAR_S3_KEY: .detail.object.key
+            InputTemplate: !Sub |
+              {
+               "environmentVariablesOverride": [ 
+                  { 
+                     "key": "JAR_S3_BUCKET",
+                     "type": "PLAINTEXT",
+                     "value": "<JAR_S3_BUCKET>"
+                  },
+                  { 
+                     "key": "JAR_S3_KEY",
+                     "type": "PLAINTEXT",
+                     "value": "<JAR_S3_KEY>"
+                  },
+                  {
+                     "key": "APT_S3_BUCKET",
+                      "type": "PLAINTEXT",
+                      "value": "${OutputBucket}"
+               ]
+              }
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+        Policies:
+          - PolicyName: Start CodeBuild project
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "codebuild:StartBuild"
+                    - "codebuild:StopBuild"
+                    - "codebuild:RetryBuild"
+                    - "codebuild:ListBuildsForProject"
+                  Resource:
+                    - !Sub "arn:aws:codebuild:${AWS::Region}:project/${CodeBuildProject}"
+Outputs:
+  InputBucket:
+    Description: Dump your jarfiles here
+    Value: !Ref InputBucket
+  APTRepositoryConfig:
+    Description: Add this to your debian sources.list
+    Value: !Sub "deb [arch=all trusted] http://${OutputBucket.RegionalDomainName} spigot-plugins main"

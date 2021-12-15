@@ -1,0 +1,43 @@
+version: 0.2
+
+env:
+  variables:
+    JAR_S3_BUCKET: ""
+    JAR_S3_KEY: ""
+    DDB_TABLE_NAME: ""
+    APT_S3_BUCKET: ""
+  exported-variables:
+    - PLUGIN_NAME
+    - PLUGIN_VERSION
+
+phases:
+  install:
+    commands:
+      - curl -o /usr/local/bin/yq -sSL https://github.com/mikefarah/yq/releases/download/v4.16.1/yq_linux_amd64 && chmod +x /usr/local/bin/yq
+      - curl -o /usr/local/bin/gomplate -sSL https://github.com/hairyhenderson/gomplate/releases/download/v3.10.0/gomplate_linux-amd64 && chmod +x /usr/local/bin/gomplate
+      - curl -sLO https://github.com/deb-s3/deb-s3/releases/download/0.11.3/deb-s3-0.11.3.gem && gem install deb-s3-0.11.3.gem
+  pre_build:
+    commands:
+      - if test -z $JAR_S3_BUCKET; then echo "JAR_S3_BUCKET is unset!" && exit 1; fi
+      - if test -z $JAR_S3_KEY; then echo "JAR_S3_KEY is unset!" && exit 1; fi
+      - if test -z APT_S3_BUCKET; then echo "APT_S3_BUCKET is unset!" && exit 1; fi
+      - aws s3 cp s3://$JAR_S3_BUCKET/$JAR_S3_KEY plugin.jar
+      - unzip -p plugin.jar plugin.yml > plugin.yml
+      - export PLUGIN_NAME=$(yq e ".name" plugin.yml | sed -e 's/\(.*\)/\L\1/')
+      - export PLUGIN_VERSION=$(yq e ".version" plugin.yml | sed "s/[^[:alnum:]\-\.]/./g")
+  build:
+    commands:
+      - export WORKDIR="$PLUGIN_NAME"_"$PLUGIN_VERSION"-1-all
+      - mkdir $WORKDIR
+      - mkdir -p $WORKDIR/opt/spigot-plugins
+      - cp plugin.jar $WORKDIR/opt/spigot-plugins/$PLUGIN_NAME-$PLUGIN_VERSION.jar
+      - mkdir -p $WORKDIR/DEBIAN
+      - gomplate -d plugin.yml -f control.gomplate -o $WORKDIR/DEBIAN/control
+      - dpkg-deb --build --root-owner-group $WORKDIR
+      - export DEB_FILE_NAME=$(basename $(find . -name "*.deb"))
+  post_build:
+    commands:
+      - deb-s3 upload --arch all -l --bucket $APT_S3_BUCKET --codename spigot-plugins $DEB_FILE_NAME
+cache:
+  paths:
+    - /usr/local/bin
