@@ -25,11 +25,10 @@ Installed jars will be saved to `/opt/spigot-plugins`.
 
 # Deployment
 
-Uses the AWS SAM framework.
+Deploy as a cloudformation stack and pass the parameter to a public link to the source github repository (change it if you fork, see the template file)
 
 ```
-sam build --use-container
-sam deploy --guided
+aws cloudformation create-stack --stack-name spigot-plugin-deb-packer --template-body file://template.yaml --capabilities CAPABILITY_IAM
 ```
 
 # Development
