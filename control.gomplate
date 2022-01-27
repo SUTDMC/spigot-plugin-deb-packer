@@ -1,0 +1,8 @@
+Package: {{ (datasource "plugin").name | strings.ToLower}}
+Version: {{ (datasource "plugin").version | regexp.Replace "^[^\\d]+" "" | regexp.Replace "[^\\w\\.~-]+" "." }}
+Architecture: all
+Maintainer: sutdmc <sutdmc@sutd.edu.sg>
+{{- if has (datasource "plugin") "depend" }}
+Depends: {{ conv.Join (datasource "plugin").depend ", " | strings.ToLower }}
+{{- end }}
+Description: Spigot plugin jar
